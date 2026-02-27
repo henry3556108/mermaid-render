@@ -1,0 +1,40 @@
+graph TB
+  subgraph Gateway["API Gateway"]
+    LoadBalancer["Load Balancer"]
+    RateLimiter["Rate Limiter"]
+    RequestRouter["Request Router"]
+    LoadBalancer --> RateLimiter
+    RateLimiter --> RequestRouter
+  end
+
+  subgraph AuthService["Auth Service"]
+    JWTManager["JWT Manager"]
+    OAuth["OAuth Provider"]
+    SessionStore["Session Store"]
+    JWTManager --> SessionStore
+    OAuth --> JWTManager
+  end
+
+  subgraph UserSvc["User Service"]
+    UserCRUD["User CRUD"]
+    ProfileManager["Profile Manager"]
+    NotificationSvc["Notification"]
+    UserCRUD --> NotificationSvc
+    ProfileManager --> UserCRUD
+  end
+
+  subgraph OrderSvc["Order Service"]
+    OrderProcessor["Order Processor"]
+    PaymentIntegration["Payment Integration"]
+    InventoryCheck["Inventory Check"]
+    OrderProcessor --> PaymentIntegration
+    OrderProcessor --> InventoryCheck
+  end
+
+  RequestRouter --> AuthService
+  RequestRouter --> UserSvc
+  RequestRouter --> OrderSvc
+  AuthService --> Cache[("Redis")]
+  UserSvc --> DB[("PostgreSQL")]
+  OrderSvc --> DB
+  OrderSvc --> MQ["Message Queue"]

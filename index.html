@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Mermaid Interactive Navigator</title>
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <div id="app">
+    <header id="toolbar">
+      <div id="toolbar-left">
+        <div id="project-controls">
+          <button id="btn-export" title="Export project as JSON">Export</button>
+          <button id="btn-import" title="Import project from JSON">Import</button>
+          <button id="btn-demo" title="Load demo project">Demo</button>
+        </div>
+        <input type="text" id="project-name" value="Untitled Project" spellcheck="false" autocomplete="off" title="Project name (click to edit)" />
+        <span class="toolbar-sep"></span>
+        <div id="breadcrumb"></div>
+      </div>
+      <div id="toolbar-actions">
+        <button id="btn-zoom-in" title="Zoom In">+</button>
+        <button id="btn-zoom-reset" title="Reset Zoom">Reset</button>
+        <button id="btn-zoom-out" title="Zoom Out">&minus;</button>
+        <button id="btn-toggle-sidebar" title="Toggle Drill Links sidebar">&#x1F517;</button>
+        <button id="btn-fullscreen" title="Fullscreen">&#x26F6;</button>
+      </div>
+    </header>
+    <div id="main-content">
+      <div id="editor-pane">
+        <div id="editor-header">
+          <div id="editor-header-left">
+            <select id="diagram-selector" title="Select diagram"></select>
+            <button id="btn-add-diagram" title="Add new diagram">+</button>
+            <button id="btn-rename-diagram" title="Rename diagram">Aa</button>
+            <button id="btn-delete-diagram" title="Delete diagram">&times;</button>
+          </div>
+          <button id="btn-editor-reset" title="Reset to original">Reset</button>
+        </div>
+        <textarea id="editor-textarea" spellcheck="false" autocomplete="off" autocorrect="off" autocapitalize="off"></textarea>
+        <div id="editor-footer"></div>
+      </div>
+      <div id="resize-handle"></div>
+      <div id="canvas-pane">
+        <div id="canvas-container">
+          <div id="diagram-canvas"></div>
+          <div id="svg-tooltip" class="svg-tooltip" style="display:none;"></div>
+        </div>
+      </div>
+      <div id="link-sidebar">
+        <div id="link-sidebar-header">
+          <span class="sidebar-title">Drill Links</span>
+          <button id="btn-close-sidebar" title="Close sidebar">&times;</button>
+        </div>
+        <div id="link-panel-content"></div>
+      </div>
+    </div>
+    <div id="create-drill-modal" class="modal-overlay" style="display:none;">
+      <div class="modal-dialog">
+        <h3>Create Linked Sub-Diagram</h3>
+        <p id="modal-element-info"></p>
+        <label for="modal-diagram-title">New diagram title:</label>
+        <input type="text" id="modal-diagram-title" autocomplete="off" />
+        <div class="modal-actions">
+          <button id="modal-btn-cancel">Cancel</button>
+          <button id="modal-btn-create">Create &amp; Link</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <input type="file" id="file-import" accept=".json" style="display:none">
+
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>

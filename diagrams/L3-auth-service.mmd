@@ -1,0 +1,42 @@
+graph TB
+  subgraph Endpoints["API Endpoints"]
+    Login["/api/auth/login"]
+    Register["/api/auth/register"]
+    Refresh["/api/auth/refresh"]
+    Logout["/api/auth/logout"]
+  end
+
+  subgraph Core["Core Logic"]
+    Validator["Input Validator"]
+    PasswordHasher["Password Hasher (bcrypt)"]
+    TokenGenerator["Token Generator"]
+    SessionManager["Session Manager"]
+  end
+
+  subgraph External["External Integrations"]
+    GoogleOAuth["Google OAuth"]
+    GitHubOAuth["GitHub OAuth"]
+    SMTP["SMTP Email"]
+  end
+
+  subgraph Store["Data Store"]
+    UserTable[("users table")]
+    SessionTable[("sessions table")]
+    RedisSession[("Redis Sessions")]
+  end
+
+  Login --> Validator
+  Register --> Validator
+  Validator --> PasswordHasher
+  Validator --> TokenGenerator
+  Login --> SessionManager
+  Register --> PasswordHasher
+  Refresh --> TokenGenerator
+  Logout --> SessionManager
+  TokenGenerator --> RedisSession
+  SessionManager --> SessionTable
+  SessionManager --> RedisSession
+  PasswordHasher --> UserTable
+  GoogleOAuth --> TokenGenerator
+  GitHubOAuth --> TokenGenerator
+  Register --> SMTP

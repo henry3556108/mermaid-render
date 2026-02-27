@@ -1,0 +1,29 @@
+graph TB
+  subgraph Frontend["Frontend Layer"]
+    WebApp["Web Application"]
+    MobileApp["Mobile App"]
+  end
+
+  subgraph Backend["Backend Services"]
+    APIGateway["API Gateway"]
+    AuthService["Auth Service"]
+    UserService["User Service"]
+    OrderService["Order Service"]
+    APIGateway --> AuthService
+    APIGateway --> UserService
+    APIGateway --> OrderService
+  end
+
+  subgraph DataLayer["Data Layer"]
+    PostgreSQL[("PostgreSQL")]
+    Redis[("Redis Cache")]
+    S3["Object Storage"]
+  end
+
+  WebApp --> APIGateway
+  MobileApp --> APIGateway
+  AuthService --> PostgreSQL
+  UserService --> PostgreSQL
+  OrderService --> PostgreSQL
+  APIGateway --> Redis
+  UserService --> S3

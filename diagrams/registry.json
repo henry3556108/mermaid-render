@@ -1,0 +1,40 @@
+{
+  "entryDiagram": "L1-overview",
+  "diagrams": {
+    "L1-overview": {
+      "file": "L1-overview.mmd",
+      "title": "System Overview",
+      "drillTargets": {
+        "Frontend": "L2-frontend",
+        "Backend": "L2-backend",
+        "DataLayer": "L2-data-layer"
+      }
+    },
+    "L2-frontend": {
+      "file": "L2-frontend.mmd",
+      "title": "Frontend Layer",
+      "parent": "L1-overview",
+      "drillTargets": {}
+    },
+    "L2-backend": {
+      "file": "L2-backend.mmd",
+      "title": "Backend Services",
+      "parent": "L1-overview",
+      "drillTargets": {
+        "AuthService": "L3-auth-service"
+      }
+    },
+    "L2-data-layer": {
+      "file": "L2-data-layer.mmd",
+      "title": "Data Layer",
+      "parent": "L1-overview",
+      "drillTargets": {}
+    },
+    "L3-auth-service": {
+      "file": "L3-auth-service.mmd",
+      "title": "Auth Service Detail",
+      "parent": "L2-backend",
+      "drillTargets": {}
+    }
+  }
+}
