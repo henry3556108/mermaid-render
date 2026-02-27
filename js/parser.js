@@ -83,9 +83,11 @@ export function parseMermaidDefinition(definition) {
       allNodeIds.add(from);
       allNodeIds.add(to);
 
+      // Register nodes in ALL ancestor subgraphs (not just innermost)
       if (subgraphStack.length > 0) {
-        const currentSg = subgraphStack[subgraphStack.length - 1];
-        currentSg.nodeIds.push(from, to);
+        for (const sg of subgraphStack) {
+          sg.nodeIds.push(from, to);
+        }
         subgraphNodeIds.add(from);
         subgraphNodeIds.add(to);
       }
@@ -100,9 +102,11 @@ export function parseMermaidDefinition(definition) {
       if (['subgraph', 'end', 'graph', 'flowchart', 'style', 'classDef', 'click', 'linkStyle'].includes(id)) continue;
 
       allNodeIds.add(id);
+      // Register node in ALL ancestor subgraphs (not just innermost)
       if (subgraphStack.length > 0) {
-        const currentSg = subgraphStack[subgraphStack.length - 1];
-        currentSg.nodeIds.push(id);
+        for (const sg of subgraphStack) {
+          sg.nodeIds.push(id);
+        }
         subgraphNodeIds.add(id);
       }
     }
@@ -122,6 +126,9 @@ export function parseMermaidDefinition(definition) {
 /**
  * Transform a Mermaid definition by collapsing specified subgraphs.
  *
+ * Uses a single-pass line iterator to preserve the original nesting structure.
+ * Collapsed subgraphs are replaced in-place with a summary node.
+ *
  * @param {string} definition - Original .mmd content
  * @param {Set<string>} collapsedIds - Set of subgraph IDs to collapse
  * @returns {string} - Transformed Mermaid definition
@@ -130,7 +137,7 @@ export function transformDefinition(definition, collapsedIds) {
   if (!collapsedIds || collapsedIds.size === 0) return definition;
 
   const parsed = parseMermaidDefinition(definition);
-  const { header, subgraphs, edges } = parsed;
+  const { subgraphs, edges } = parsed;
   const lines = definition.split('\n');
 
   // Build subgraph map
@@ -139,107 +146,97 @@ export function transformDefinition(definition, collapsedIds) {
     sgMap.set(sg.id, sg);
   }
 
-  // Build set of all nodes inside collapsed subgraphs
-  // and map each collapsed internal node -> summary node ID
+  // Map each collapsed internal node -> its collapsed subgraph ID (summary node)
   const nodeToSummary = new Map();
-  const allCollapsedNodes = new Set();
-
   for (const sgId of collapsedIds) {
     const sg = sgMap.get(sgId);
     if (!sg) continue;
     for (const nodeId of sg.nodeIds) {
       nodeToSummary.set(nodeId, sgId);
-      allCollapsedNodes.add(nodeId);
     }
   }
 
-  // Build subgraph line ranges for checking if a line is inside a subgraph
-  const subgraphRanges = subgraphs.map(sg => ({
-    id: sg.id,
-    start: sg.startLine,
-    end: sg.endLine,
-  }));
-
-  function isInsideSubgraph(lineIdx) {
-    for (const r of subgraphRanges) {
-      if (lineIdx >= r.start && lineIdx <= r.end) return r.id;
-    }
-    return null;
-  }
-
-  // Rebuild the definition
-  const outputLines = [];
-  outputLines.push(header || 'graph TB');
-
-  // 1. Emit collapsed subgraphs as summary nodes
+  // Build collapsed line ranges
+  const collapsedRanges = [];
   for (const sgId of collapsedIds) {
     const sg = sgMap.get(sgId);
     if (!sg) continue;
-    outputLines.push(`  ${sgId}["[+] ${sg.label} (${sg.nodeIds.length} nodes)"]`);
+    collapsedRanges.push({ start: sg.startLine, end: sg.endLine, id: sgId });
   }
 
-  // 2. Emit non-collapsed subgraphs (their original lines, but skip edges involving collapsed nodes)
-  for (const sg of subgraphs) {
-    if (collapsedIds.has(sg.id)) continue;
-
-    for (let i = sg.startLine; i <= sg.endLine; i++) {
-      // Check if this line is an edge involving a collapsed node
-      let skip = false;
-      for (const edge of edges) {
-        if (edge.line === i) {
-          if (allCollapsedNodes.has(edge.from) || allCollapsedNodes.has(edge.to)) {
-            skip = true;
-            break;
-          }
-        }
-      }
-      if (!skip) {
-        outputLines.push(lines[i]);
-      }
+  function isLineInCollapsedRange(lineIdx) {
+    for (const r of collapsedRanges) {
+      if (lineIdx >= r.start && lineIdx <= r.end) return true;
     }
+    return false;
   }
 
-  // 3. Emit free lines (outside any subgraph, not edges, not header)
+  // Build edge lookup by line number
+  const edgeByLine = new Map();
+  for (const edge of edges) {
+    edgeByLine.set(edge.line, edge);
+  }
+
+  // Track inserted summary nodes and deduplicated redirected edges
+  const insertedSummaries = new Set();
+  const emittedEdges = new Set();
+
+  // Single pass through all lines, preserving original order and nesting
+  const outputLines = [];
+
   for (let i = 0; i < lines.length; i++) {
     const trimmed = lines[i].trim();
-    if (!trimmed || trimmed.startsWith('%%')) continue;
-    if (HEADER_RE.test(trimmed)) continue;
-    if (isInsideSubgraph(i) !== null) continue;
 
-    // Skip edge lines (we handle all edges below)
-    let isEdge = false;
-    for (const edge of edges) {
-      if (edge.line === i) { isEdge = true; break; }
+    // Preserve blank lines and comments (unless inside collapsed range)
+    if (!trimmed || trimmed.startsWith('%%')) {
+      if (!isLineInCollapsedRange(i)) {
+        outputLines.push(lines[i]);
+      }
+      continue;
     }
-    if (isEdge) continue;
 
-    // It's a free node definition — emit it
+    // If this line is inside a collapsed range...
+    if (isLineInCollapsedRange(i)) {
+      // At the start line of a collapsed subgraph, emit a summary node
+      const sgMatch = trimmed.match(SUBGRAPH_START_RE);
+      if (sgMatch && collapsedIds.has(sgMatch[1]) && !insertedSummaries.has(sgMatch[1])) {
+        const sg = sgMap.get(sgMatch[1]);
+        if (sg) {
+          insertedSummaries.add(sg.id);
+          outputLines.push(`  ${sg.id}["[+] ${sg.label} (${sg.nodeIds.length} nodes)"]`);
+        }
+      }
+      // Skip all other lines inside collapsed ranges
+      continue;
+    }
+
+    // Handle edge lines: redirect endpoints if they point to collapsed nodes
+    const edge = edgeByLine.get(i);
+    if (edge) {
+      let from = edge.from;
+      let to = edge.to;
+
+      if (nodeToSummary.has(from)) from = nodeToSummary.get(from);
+      if (nodeToSummary.has(to)) to = nodeToSummary.get(to);
+
+      // Skip self-loops (internal edges within same collapsed subgraph)
+      if (from === to) continue;
+
+      // Deduplicate redirected edges
+      const edgeKey = `${from}-->${to}`;
+      if (emittedEdges.has(edgeKey)) continue;
+      emittedEdges.add(edgeKey);
+
+      if (edge.label) {
+        outputLines.push(`  ${from} -->|${edge.label}| ${to}`);
+      } else {
+        outputLines.push(`  ${from} --> ${to}`);
+      }
+      continue;
+    }
+
+    // All other lines: pass through as-is
     outputLines.push(lines[i]);
-  }
-
-  // 4. Emit all edges, redirecting those involving collapsed nodes
-  const emittedEdges = new Set();
-  for (const edge of edges) {
-    let from = edge.from;
-    let to = edge.to;
-
-    // Redirect if endpoint is inside a collapsed subgraph
-    if (nodeToSummary.has(from)) from = nodeToSummary.get(from);
-    if (nodeToSummary.has(to)) to = nodeToSummary.get(to);
-
-    // Skip self-loops (internal edges within same collapsed subgraph)
-    if (from === to) continue;
-
-    // Deduplicate
-    const edgeKey = `${from}-->${to}`;
-    if (emittedEdges.has(edgeKey)) continue;
-    emittedEdges.add(edgeKey);
-
-    if (edge.label) {
-      outputLines.push(`  ${from} -->|${edge.label}| ${to}`);
-    } else {
-      outputLines.push(`  ${from} --> ${to}`);
-    }
   }
 
   return outputLines.join('\n');
