@@ -1,75 +1,20 @@
 graph TB
-  subgraph DataPlatform["Data Platform"]
-
-    subgraph Primary["Primary Database"]
-      subgraph WriteCluster["Write Cluster"]
-        PGMaster["PostgreSQL Master"]
-        WALArchiver["WAL Archiver"]
-        PGMaster -->|WAL stream| WALArchiver
-      end
-
-      subgraph ReadCluster["Read Cluster"]
-        PGReplica1["Read Replica 1"]
-        PGReplica2["Read Replica 2"]
-        ConnPool["Connection Pool"]
-        ConnPool --> PGReplica1
-        ConnPool --> PGReplica2
-      end
-
-      PGMaster -->|replication| PGReplica1
-      PGMaster -->|replication| PGReplica2
+  subgraph Database["Database"]
+    subgraph Primary["Primary"]
+      Master["Master"]
+      Replica["Replica"]
+      Master -->|replication| Replica
     end
-
-    subgraph CacheLayer["Cache Layer"]
-      subgraph RedisHA["Redis HA"]
-        RedisPrimary["Redis Primary"]
-        RedisReplica["Redis Replica"]
-        RedisSentinel["Sentinel"]
-        RedisSentinel --> RedisPrimary
-        RedisSentinel --> RedisReplica
-        RedisPrimary -->|sync| RedisReplica
-      end
-
-      subgraph CacheStrategy["Cache Strategy"]
-        L1Cache["L1 In-Memory"]
-        L2Cache["L2 Redis"]
-        L1Cache -->|miss| L2Cache
-      end
-    end
-
-    subgraph Storage["Object Storage"]
-      subgraph MediaPipeline["Media Pipeline"]
-        Uploader["Upload Service"]
-        Processor["Image Processor"]
-        Uploader --> Processor
-      end
-
-      S3Bucket["S3 Bucket"]
-      CDN["CDN Distribution"]
-      Processor --> S3Bucket
-      S3Bucket --> CDN
-    end
-
-    subgraph Messaging["Message Queue"]
-      subgraph EventBus["Event Bus"]
-        Exchange["Exchange"]
-        Queue1["Priority Queue"]
-        Queue2["Batch Queue"]
-        Exchange --> Queue1
-        Exchange --> Queue2
-      end
-
-      DeadLetter["Dead Letter Queue"]
-      RetryWorker["Retry Worker"]
-      Queue1 -->|failed| DeadLetter
-      DeadLetter --> RetryWorker
-      RetryWorker --> Exchange
-    end
-
+    ConnPool["Connection Pool"]
+    ConnPool --> Master
+    ConnPool --> Replica
   end
 
-  AppLayer["Application Layer"] --> PGMaster
-  AppLayer --> ConnPool
-  AppLayer --> L1Cache
-  AppLayer --> Uploader
-  AppLayer --> Exchange
+  subgraph CacheLayer["Cache"]
+    Redis["Redis"]
+    InMemory["In-Memory L1"]
+    InMemory -->|miss| Redis
+  end
+
+  App["Application"] --> ConnPool
+  App --> InMemory

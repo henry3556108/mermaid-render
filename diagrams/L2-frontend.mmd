@@ -1,35 +1,18 @@
 graph TB
-  subgraph WebApp["Web Application"]
-    Router["React Router"]
-    AuthPage["Auth Pages"]
-    Dashboard["Dashboard"]
-    AdminPanel["Admin Panel"]
-    Router --> AuthPage
-    Router --> Dashboard
-    Router --> AdminPanel
+  subgraph WebApp["Web App"]
+    Router["Router"]
+    Pages["Pages"]
+    Components["Components"]
+    Router --> Pages
+    Pages --> Components
   end
 
   subgraph MobileApp["Mobile App"]
-    Navigation["Navigation Stack"]
-    LoginScreen["Login Screen"]
-    HomeScreen["Home Screen"]
-    ProfileScreen["Profile Screen"]
-    Navigation --> LoginScreen
-    Navigation --> HomeScreen
-    Navigation --> ProfileScreen
+    Navigator["Navigator"]
+    Screens["Screens"]
+    Navigator --> Screens
   end
 
-  subgraph SharedLib["Shared Libraries"]
-    APIClient["API Client"]
-    StateManager["State Manager"]
-    UIComponents["UI Components"]
-  end
-
-  AuthPage --> APIClient
-  Dashboard --> APIClient
-  Dashboard --> StateManager
-  LoginScreen --> APIClient
-  HomeScreen --> APIClient
-  HomeScreen --> StateManager
-  AdminPanel --> UIComponents
-  ProfileScreen --> UIComponents
+  SharedAPI["API Client"]
+  Components --> SharedAPI
+  Screens --> SharedAPI
