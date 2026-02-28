@@ -296,14 +296,14 @@ function _generateId() {
   return 'diagram-' + Date.now() + '-' + _idCounter;
 }
 
-export function addDiagram(title) {
+export function addDiagram(title, initialContent) {
   const id = _generateId();
   state.registry.diagrams[id] = {
     title: title || 'Untitled',
     drillTargets: {},
     parent: null,
   };
-  state.rawDefinitions[id] = 'graph TB\n  A["Start"]';
+  state.rawDefinitions[id] = initialContent || 'graph TB\n  A["Start"]';
   _saveNow();
   notify('project-structure');
   return id;

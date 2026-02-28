@@ -243,6 +243,63 @@ export function transformDefinition(definition, collapsedIds) {
 }
 
 /**
+ * Extract the internal content of a specific subgraph as a standalone diagram.
+ * Includes all nested subgraphs, nodes, and edges that are fully inside.
+ *
+ * @param {string} definition - Full parent diagram definition
+ * @param {string} subgraphId - The subgraph ID to extract
+ * @returns {string|null} - A standalone mermaid definition, or null if not found
+ */
+export function extractSubgraphContent(definition, subgraphId) {
+  const parsed = parseMermaidDefinition(definition);
+  const header = parsed.header || 'graph TB';
+
+  // Find the target subgraph
+  const target = parsed.subgraphs.find(sg => sg.id === subgraphId);
+  if (!target) return null;
+
+  const lines = definition.split('\n');
+
+  // Collect lines between subgraph start and end (exclusive of the subgraph/end markers)
+  // We need to handle nested subgraphs: keep inner subgraph/end pairs, only skip the outermost
+  const contentLines = [];
+  let depth = 0;
+  for (let i = target.startLine + 1; i < target.endLine; i++) {
+    const trimmed = lines[i].trim();
+    if (!trimmed) continue;
+
+    if (SUBGRAPH_START_RE.test(trimmed)) {
+      depth++;
+      contentLines.push(lines[i]);
+    } else if (SUBGRAPH_END_RE.test(trimmed)) {
+      depth--;
+      contentLines.push(lines[i]);
+    } else {
+      contentLines.push(lines[i]);
+    }
+  }
+
+  // Also include edges from outside the subgraph that connect two nodes both inside it
+  const nodeSet = new Set(target.nodeIds);
+  for (const edge of parsed.edges) {
+    // Skip edges already inside the subgraph line range
+    if (edge.line > target.startLine && edge.line < target.endLine) continue;
+    // Only include if both endpoints are inside this subgraph
+    if (nodeSet.has(edge.from) && nodeSet.has(edge.to)) {
+      if (edge.label) {
+        contentLines.push(`  ${edge.from} -->|${edge.label}| ${edge.to}`);
+      } else {
+        contentLines.push(`  ${edge.from} --> ${edge.to}`);
+      }
+    }
+  }
+
+  if (contentLines.length === 0) return null;
+
+  return header + '\n' + contentLines.join('\n') + '\n';
+}
+
+/**
  * Extract subgraph IDs from a definition (for UI controls).
  */
 export function extractSubgraphIds(definition) {

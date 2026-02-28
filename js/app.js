@@ -30,7 +30,7 @@ import {
 
 import { renderBreadcrumb, loadDiagramDefinition } from './navigator.js';
 import { initRenderer, renderDiagram, zoomIn, zoomOut, zoomReset } from './renderer.js';
-import { transformDefinition, extractSubgraphIds, parseMermaidDefinition } from './parser.js';
+import { transformDefinition, extractSubgraphIds, parseMermaidDefinition, extractSubgraphContent } from './parser.js';
 
 // Editor elements
 let editorTextarea = null;
@@ -544,8 +544,41 @@ async function showCreateDrillModal(nodeId, label, type) {
   const title = await openCreateDrillModal(info, label);
   if (!title) return;
 
-  const newId = addDiagram(title);
-  setDrillTarget(diagramId, nodeId, newId);
+  // For subgraphs, extract internal content as the initial diagram template
+  let initialContent = null;
+  if (type === 'subgraph') {
+    const rawDef = editorTextarea.value || getRawDefinition(diagramId) || '';
+    initialContent = extractSubgraphContent(rawDef, nodeId);
+  }
+
+  // Determine which diagram should own this new drill link.
+  // If the node belongs to a subgraph that already has a linked diagram,
+  // create the drill link on that linked diagram instead of the current one.
+  let ownerDiagramId = diagramId;
+  if (type === 'node') {
+    const rawDef = editorTextarea.value || getRawDefinition(diagramId) || '';
+    const parsed = parseMermaidDefinition(rawDef);
+    const currentDrillTargets = getDrillTargets();
+
+    // Find the innermost subgraph containing this node.
+    // Since nodes are registered in all ancestor subgraphs,
+    // the innermost one has the smallest nodeIds array.
+    let innermostSg = null;
+    for (const sg of parsed.subgraphs) {
+      if (sg.nodeIds.includes(nodeId)) {
+        if (!innermostSg || sg.nodeIds.length < innermostSg.nodeIds.length) {
+          innermostSg = sg;
+        }
+      }
+    }
+
+    if (innermostSg && currentDrillTargets[innermostSg.id]) {
+      ownerDiagramId = currentDrillTargets[innermostSg.id];
+    }
+  }
+
+  const newId = addDiagram(title, initialContent);
+  setDrillTarget(ownerDiagramId, nodeId, newId);
 }
 
 // --- Render ---
