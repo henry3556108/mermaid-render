@@ -5,7 +5,7 @@
 
 import {
   getBreadcrumbTrail,
-  navigateToBreadcrumb,
+  navigateTo,
   getRawDefinition,
 } from './state.js';
 
@@ -35,7 +35,7 @@ export function renderBreadcrumb() {
     } else {
       const targetId = item.id;
       crumb.addEventListener('click', () => {
-        navigateToBreadcrumb(targetId);
+        navigateTo(targetId);
       });
     }
 

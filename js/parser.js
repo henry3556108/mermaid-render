@@ -6,9 +6,6 @@
  * with summary nodes while redirecting edges.
  */
 
-// Edge arrow patterns: -->, --->, ===>, -.->, -.->
-const EDGE_PATTERN = /(-+->|=+=>|-\.+->)/;
-
 // Match an edge line: NodeA --> NodeB  or  NodeA -->|label| NodeB
 const EDGE_LINE_RE = /^\s*(\w+)\s*(-+->|=+=>|-\.+->)\s*(?:\|([^|]*)\|\s*)?(\w+)/;
 
@@ -133,10 +130,10 @@ export function parseMermaidDefinition(definition) {
  * @param {Set<string>} collapsedIds - Set of subgraph IDs to collapse
  * @returns {string} - Transformed Mermaid definition
  */
-export function transformDefinition(definition, collapsedIds) {
+export function transformDefinition(definition, collapsedIds, prebuiltParsed) {
   if (!collapsedIds || collapsedIds.size === 0) return definition;
 
-  const parsed = parseMermaidDefinition(definition);
+  const parsed = prebuiltParsed || parseMermaidDefinition(definition);
   const { subgraphs, edges } = parsed;
   const lines = definition.split('\n');
 
@@ -263,20 +260,10 @@ export function extractSubgraphContent(definition, subgraphId) {
   // Collect lines between subgraph start and end (exclusive of the subgraph/end markers)
   // We need to handle nested subgraphs: keep inner subgraph/end pairs, only skip the outermost
   const contentLines = [];
-  let depth = 0;
   for (let i = target.startLine + 1; i < target.endLine; i++) {
     const trimmed = lines[i].trim();
     if (!trimmed) continue;
-
-    if (SUBGRAPH_START_RE.test(trimmed)) {
-      depth++;
-      contentLines.push(lines[i]);
-    } else if (SUBGRAPH_END_RE.test(trimmed)) {
-      depth--;
-      contentLines.push(lines[i]);
-    } else {
-      contentLines.push(lines[i]);
-    }
+    contentLines.push(lines[i]);
   }
 
   // Also include edges from outside the subgraph that connect two nodes both inside it
@@ -302,7 +289,7 @@ export function extractSubgraphContent(definition, subgraphId) {
 /**
  * Extract subgraph IDs from a definition (for UI controls).
  */
-export function extractSubgraphIds(definition) {
-  const parsed = parseMermaidDefinition(definition);
+export function extractSubgraphIds(definition, prebuiltParsed) {
+  const parsed = prebuiltParsed || parseMermaidDefinition(definition);
   return parsed.subgraphs.map(sg => ({ id: sg.id, label: sg.label }));
 }

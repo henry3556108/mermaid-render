@@ -112,6 +112,7 @@ async function init() {
       renderCurrentDiagram();
       if (isSidebarOpen()) buildLinkPanel();
     } else if (eventType === 'collapse') {
+      previewCache = {};
       renderCurrentDiagram();
     } else if (eventType === 'project-structure') {
       previewCache = {};
@@ -119,6 +120,7 @@ async function init() {
       refreshDiagramSelector();
       if (isSidebarOpen()) buildLinkPanel();
     } else if (eventType === 'drill-targets') {
+      previewCache = {};
       renderCurrentDiagram();
       if (isSidebarOpen()) buildLinkPanel();
     }
@@ -448,6 +450,7 @@ function initEditor() {
       editorTextarea.value =
         editorTextarea.value.substring(0, start) + '  ' + editorTextarea.value.substring(end);
       editorTextarea.selectionStart = editorTextarea.selectionEnd = start + 2;
+      editorTextarea.dispatchEvent(new Event('input', { bubbles: true }));
     }
   });
 }
@@ -458,6 +461,7 @@ function onEditorInput() {
 
   const content = editorTextarea.value;
   setEditorContent(diagramId, content);
+  previewCache = {};
   renderCurrentDiagram();
   if (isSidebarOpen()) buildLinkPanel();
 }
@@ -551,6 +555,19 @@ function initCreateDrillModal() {
     if (e.key === 'Enter') {
       e.preventDefault();
       close(titleInput.value.trim() || null);
+    }
+    // Focus trap: cycle focus within modal
+    if (e.key === 'Tab') {
+      const focusable = overlay.querySelectorAll('input, button, [tabindex]:not([tabindex="-1"])');
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (e.shiftKey && document.activeElement === first) {
+        e.preventDefault();
+        last.focus();
+      } else if (!e.shiftKey && document.activeElement === last) {
+        e.preventDefault();
+        first.focus();
+      }
     }
   });
 
@@ -801,12 +818,13 @@ function renderCurrentDiagram() {
     rawDefinition = loadDiagramDefinition(diagramId);
   }
 
-  // Extract subgraph info from the raw definition
-  const subgraphIds = extractSubgraphIds(rawDefinition);
+  // Parse once and reuse for subgraph extraction + collapse transform
+  const parsed = parseMermaidDefinition(rawDefinition);
+  const subgraphIds = extractSubgraphIds(rawDefinition, parsed);
 
   // Apply collapse transformations
   const collapsedIds = getCollapseState(diagramId);
-  const finalDefinition = transformDefinition(rawDefinition, collapsedIds);
+  const finalDefinition = transformDefinition(rawDefinition, collapsedIds, parsed);
 
   // Get drill targets for current diagram
   const drillTargets = getDrillTargets();

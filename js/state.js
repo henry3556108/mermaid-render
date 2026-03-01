@@ -36,10 +36,6 @@ function notify(eventType) {
 
 // --- Registry ---
 
-export function setRegistry(registry) {
-  state.registry = registry;
-}
-
 export function getRegistry() {
   return state.registry;
 }
@@ -58,7 +54,7 @@ export function getCurrentDiagramId() {
   return state.currentDiagramId;
 }
 
-export function getCurrentDiagramConfig() {
+function getCurrentDiagramConfig() {
   if (!state.registry || !state.currentDiagramId) return null;
   return state.registry.diagrams[state.currentDiagramId] || null;
 }
@@ -68,10 +64,6 @@ export function getDrillTargets() {
   return config ? config.drillTargets || {} : {};
 }
 
-export function cacheDefinition(diagramId, definition) {
-  state.rawDefinitions[diagramId] = definition;
-}
-
 export function getRawDefinition(diagramId) {
   return state.rawDefinitions[diagramId] || null;
 }
@@ -79,28 +71,6 @@ export function getRawDefinition(diagramId) {
 // --- Navigation ---
 
 export function navigateTo(diagramId) {
-  if (diagramId === state.currentDiagramId) return;
-  state.currentDiagramId = diagramId;
-  notify('navigate');
-}
-
-/**
- * Navigate to parent diagram in the tree hierarchy.
- */
-export function navigateBack() {
-  const config = getCurrentDiagramConfig();
-  if (!config || !config.parent) return;
-  const parentId = config.parent;
-  if (state.registry.diagrams[parentId]) {
-    state.currentDiagramId = parentId;
-    notify('navigate');
-  }
-}
-
-/**
- * Navigate to a specific diagram by ID (used by breadcrumb clicks).
- */
-export function navigateToBreadcrumb(diagramId) {
   if (diagramId === state.currentDiagramId) return;
   state.currentDiagramId = diagramId;
   notify('navigate');
@@ -136,10 +106,6 @@ export function getCollapseState(diagramId) {
   return state.collapseStates[diagramId];
 }
 
-export function isCollapsed(diagramId, subgraphId) {
-  return getCollapseState(diagramId).has(subgraphId);
-}
-
 export function toggleCollapse(diagramId, subgraphId) {
   const s = getCollapseState(diagramId);
   if (s.has(subgraphId)) {
@@ -154,8 +120,6 @@ export function toggleCollapse(diagramId, subgraphId) {
 
 export function setEditorContent(diagramId, content) {
   state.editorContent[diagramId] = content;
-  // Also update raw definition (content IS the source of truth now)
-  state.rawDefinitions[diagramId] = content;
   persistProject();
 }
 
@@ -183,7 +147,7 @@ function _saveNow() {
       title: config.title,
       drillTargets: config.drillTargets || {},
       parent: config.parent || null,
-      content: state.rawDefinitions[id] || 'graph TB\n  A["Start"]',
+      content: state.editorContent[id] ?? state.rawDefinitions[id] ?? 'graph TB\n  A["Start"]',
     };
   }
   try {
@@ -265,10 +229,22 @@ export function createDefaultProject() {
 // --- Project Export / Import ---
 
 export function getProjectJSON() {
-  // Force a save first to ensure we have latest data
-  _saveNow();
-  const raw = localStorage.getItem(STORAGE_KEY);
-  return raw || '{}';
+  if (!state.registry) return '{}';
+  const project = {
+    version: PROJECT_VERSION,
+    projectName: state.registry.projectName || 'Untitled Project',
+    entryDiagram: state.registry.entryDiagram,
+    diagrams: {},
+  };
+  for (const [id, config] of Object.entries(state.registry.diagrams)) {
+    project.diagrams[id] = {
+      title: config.title,
+      drillTargets: config.drillTargets || {},
+      parent: config.parent || null,
+      content: state.editorContent[id] ?? state.rawDefinitions[id] ?? 'graph TB\n  A["Start"]',
+    };
+  }
+  return JSON.stringify(project);
 }
 
 export function importProject(jsonString) {
@@ -318,7 +294,7 @@ export function deleteDiagram(diagramId) {
     return false;
   }
 
-  // Clean up drillTargets in all diagrams that point to the deleted diagram
+  // Clean up drillTargets and parent references in all diagrams
   for (const [id, config] of Object.entries(state.registry.diagrams)) {
     if (config.drillTargets) {
       for (const [nodeId, targetId] of Object.entries(config.drillTargets)) {
@@ -326,6 +302,9 @@ export function deleteDiagram(diagramId) {
           delete config.drillTargets[nodeId];
         }
       }
+    }
+    if (config.parent === diagramId) {
+      config.parent = null;
     }
   }
 

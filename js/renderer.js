@@ -26,7 +26,6 @@ let diagramCanvas = null;
 let tooltipEl = null;
 let currentHighlight = null;
 let currentDrillTargets = {};
-let currentSubgraphIds = [];
 let currentOnDrill = () => { };
 let currentOnCreateDrill = () => { };
 let currentOnHoverDrillable = () => { };
@@ -396,8 +395,17 @@ function setupPanZoom() {
         e.touches[1].clientX - e.touches[0].clientX,
         e.touches[1].clientY - e.touches[0].clientY
       );
-      const delta = (dist - lastTouchDist) * 0.005;
-      scale = Math.min(MAX_SCALE, Math.max(MIN_SCALE, scale + delta));
+      const rect = canvasContainer.getBoundingClientRect();
+      const midX = (e.touches[0].clientX + e.touches[1].clientX) / 2 - rect.left;
+      const midY = (e.touches[0].clientY + e.touches[1].clientY) / 2 - rect.top;
+
+      const oldScale = scale;
+      const factor = dist / lastTouchDist;
+      scale = Math.min(MAX_SCALE, Math.max(MIN_SCALE, scale * factor));
+
+      panX = midX - (midX - panX) * (scale / oldScale);
+      panY = midY - (midY - panY) * (scale / oldScale);
+
       lastTouchDist = dist;
       applyTransform();
     }
@@ -477,7 +485,6 @@ export async function renderDiagram(definition, options = {}) {
 
   // Update module-level state for event handlers
   currentDrillTargets = drillTargets;
-  currentSubgraphIds = subgraphIds;
   currentOnDrill = onDrill;
   currentOnCreateDrill = onCreateDrill;
   currentOnHoverDrillable = onHoverDrillable;
