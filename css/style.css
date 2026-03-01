@@ -370,6 +370,106 @@ html, body {
   font-style: italic;
 }
 
+/* Link Preview Overlay */
+#link-preview-overlay {
+  position: absolute;
+  bottom: 16px;
+  right: 16px;
+  width: 576px;
+  max-width: calc(100% - 32px);
+  background: #fff;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.18);
+  z-index: 15;
+  overflow: hidden;
+  pointer-events: none;
+  display: flex;
+  flex-direction: column;
+}
+
+#link-preview-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text);
+  padding: 6px 12px;
+  background: var(--bg);
+  border-bottom: 1px solid var(--border);
+  user-select: none;
+}
+
+#link-preview-title {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex: 1;
+}
+
+#link-preview-close {
+  display: none;
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  font-size: 16px;
+  cursor: pointer;
+  padding: 0 2px;
+  line-height: 1;
+  margin-left: 8px;
+  flex-shrink: 0;
+  transition: color 0.15s;
+}
+
+#link-preview-close:hover {
+  color: var(--text);
+}
+
+#link-preview-content {
+  height: 408px;
+  overflow: hidden;
+  background: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 8px;
+}
+
+#link-preview-content svg {
+  max-width: 100%;
+  max-height: 100%;
+}
+
+.preview-placeholder {
+  color: var(--text-muted);
+  font-size: 12px;
+  font-style: italic;
+}
+
+/* Pinned state */
+#link-preview-overlay.pinned {
+  pointer-events: auto;
+  box-shadow: 0 6px 32px rgba(0, 0, 0, 0.25);
+}
+
+#link-preview-overlay.pinned #link-preview-close {
+  display: block;
+}
+
+#link-preview-overlay.pinned #link-preview-content {
+  cursor: grab;
+}
+
+#link-preview-overlay.pinned #link-preview-content.dragging {
+  cursor: grabbing;
+}
+
+#link-preview-overlay.pinned #link-preview-content svg {
+  max-width: none;
+  max-height: none;
+}
+
 /* Drillable subgraph cluster border */
 .cluster.drillable rect {
   stroke: var(--accent) !important;

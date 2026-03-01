@@ -41,6 +41,26 @@ const DEBOUNCE_MS = 500;
 // Create-drill modal
 let openCreateDrillModal = null;
 
+// Preview overlay
+let previewOverlay = null;
+let previewTitle = null;
+let previewCloseBtn = null;
+let previewContent = null;
+let previewCache = {};
+let currentPreviewId = null;
+let previewRenderCounter = 0;
+let previewPinned = false;
+
+// Preview pan/zoom state
+let pvScale = 1;
+let pvPanX = 0;
+let pvPanY = 0;
+let pvDragging = false;
+let pvDragStartX = 0;
+let pvDragStartY = 0;
+let pvPanStartX = 0;
+let pvPanStartY = 0;
+
 async function init() {
   // Load or create project from localStorage
   loadProject();
@@ -66,6 +86,13 @@ async function init() {
   // Init link sidebar
   initLinkSidebar();
 
+  // Init preview overlay
+  previewOverlay = document.getElementById('link-preview-overlay');
+  previewTitle = document.getElementById('link-preview-title');
+  previewCloseBtn = document.getElementById('link-preview-close');
+  previewContent = document.getElementById('link-preview-content');
+  initPreviewInteractions();
+
   // Init create-drill modal
   openCreateDrillModal = initCreateDrillModal();
 
@@ -78,6 +105,8 @@ async function init() {
   // Listen for state changes
   onStateChange((eventType) => {
     if (eventType === 'navigate') {
+      previewCache = {};
+      hidePreviewOverlay();
       refreshDiagramSelector();
       syncEditorForCurrentDiagram();
       renderCurrentDiagram();
@@ -85,6 +114,8 @@ async function init() {
     } else if (eventType === 'collapse') {
       renderCurrentDiagram();
     } else if (eventType === 'project-structure') {
+      previewCache = {};
+      hidePreviewOverlay();
       refreshDiagramSelector();
       if (isSidebarOpen()) buildLinkPanel();
     } else if (eventType === 'drill-targets') {
@@ -581,6 +612,177 @@ async function showCreateDrillModal(nodeId, label, type) {
   setDrillTarget(ownerDiagramId, nodeId, newId);
 }
 
+// --- Preview ---
+
+function showPreviewOverlay(targetDiagramId) {
+  const registry = getRegistry();
+  const config = registry.diagrams[targetDiagramId];
+  previewTitle.textContent = config ? config.title : targetDiagramId;
+  previewOverlay.style.display = '';
+}
+
+function hidePreviewOverlay() {
+  currentPreviewId = null;
+  previewOverlay.style.display = 'none';
+  unpinPreview();
+}
+
+function pinPreview() {
+  previewPinned = true;
+  previewOverlay.classList.add('pinned');
+  resetPreviewTransform();
+}
+
+function unpinPreview() {
+  previewPinned = false;
+  previewOverlay.classList.remove('pinned');
+  previewContent.classList.remove('dragging');
+  resetPreviewTransform();
+}
+
+function resetPreviewTransform() {
+  pvScale = 1;
+  pvPanX = 0;
+  pvPanY = 0;
+  const svg = previewContent.querySelector('svg');
+  if (svg) {
+    svg.style.transform = '';
+    svg.style.transformOrigin = '';
+  }
+}
+
+function applyPreviewTransform() {
+  const svg = previewContent.querySelector('svg');
+  if (!svg) return;
+  svg.style.transformOrigin = '0 0';
+  svg.style.transform = `translate(${pvPanX}px, ${pvPanY}px) scale(${pvScale})`;
+}
+
+function initPreviewInteractions() {
+  // Close button
+  previewCloseBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    hidePreviewOverlay();
+  });
+
+  // Escape key to unpin
+  window.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && previewPinned) {
+      hidePreviewOverlay();
+    }
+  });
+
+  // Wheel zoom on preview
+  previewContent.addEventListener('wheel', (e) => {
+    if (!previewPinned) return;
+    e.preventDefault();
+    e.stopPropagation();
+
+    const rect = previewContent.getBoundingClientRect();
+    const mouseX = e.clientX - rect.left;
+    const mouseY = e.clientY - rect.top;
+
+    const oldScale = pvScale;
+    const factor = Math.pow(1.001, -e.deltaY);
+    pvScale = Math.min(5, Math.max(0.2, pvScale * factor));
+
+    pvPanX = mouseX - (mouseX - pvPanX) * (pvScale / oldScale);
+    pvPanY = mouseY - (mouseY - pvPanY) * (pvScale / oldScale);
+
+    applyPreviewTransform();
+  }, { passive: false });
+
+  // Drag pan on preview
+  previewContent.addEventListener('mousedown', (e) => {
+    if (!previewPinned || e.button !== 0) return;
+    e.stopPropagation();
+    pvDragging = true;
+    pvDragStartX = e.clientX;
+    pvDragStartY = e.clientY;
+    pvPanStartX = pvPanX;
+    pvPanStartY = pvPanY;
+    previewContent.classList.add('dragging');
+  });
+
+  window.addEventListener('mousemove', (e) => {
+    if (!pvDragging) return;
+    pvPanX = pvPanStartX + (e.clientX - pvDragStartX);
+    pvPanY = pvPanStartY + (e.clientY - pvDragStartY);
+    applyPreviewTransform();
+  });
+
+  window.addEventListener('mouseup', () => {
+    if (pvDragging) {
+      pvDragging = false;
+      previewContent.classList.remove('dragging');
+    }
+  });
+}
+
+function onClickDrillable(targetDiagramId) {
+  if (targetDiagramId === null) {
+    // Clicked empty area — unpin if pinned
+    if (previewPinned) hidePreviewOverlay();
+    return;
+  }
+
+  if (previewPinned && targetDiagramId === currentPreviewId) {
+    // Clicked same element — toggle off
+    hidePreviewOverlay();
+    return;
+  }
+
+  // Pin this preview (render it first if needed, then pin)
+  renderPreviewContent(targetDiagramId).then(() => {
+    pinPreview();
+  });
+}
+
+async function updatePreview(targetDiagramId) {
+  // Ignore hover updates while pinned
+  if (previewPinned) return;
+
+  if (targetDiagramId === null) {
+    hidePreviewOverlay();
+    return;
+  }
+
+  if (targetDiagramId === currentPreviewId) return;
+  await renderPreviewContent(targetDiagramId);
+}
+
+async function renderPreviewContent(targetDiagramId) {
+  currentPreviewId = targetDiagramId;
+  showPreviewOverlay(targetDiagramId);
+  resetPreviewTransform();
+
+  if (previewCache[targetDiagramId]) {
+    previewContent.innerHTML = previewCache[targetDiagramId];
+    return;
+  }
+
+  previewContent.innerHTML = '<div class="preview-placeholder">Loading...</div>';
+
+  const content = getEditorContent(targetDiagramId) || getRawDefinition(targetDiagramId);
+  if (!content) {
+    previewContent.innerHTML = '<div class="preview-placeholder">No content</div>';
+    return;
+  }
+
+  try {
+    const id = `mermaid-preview-${++previewRenderCounter}`;
+    const { svg } = await window.mermaid.render(id, content);
+    previewCache[targetDiagramId] = svg;
+    if (currentPreviewId === targetDiagramId) {
+      previewContent.innerHTML = svg;
+    }
+  } catch {
+    if (currentPreviewId === targetDiagramId) {
+      previewContent.innerHTML = '<div class="preview-placeholder">Render error</div>';
+    }
+  }
+}
+
 // --- Render ---
 
 function renderCurrentDiagram() {
@@ -627,6 +829,12 @@ function renderCurrentDiagram() {
     },
     onCreateDrill: (nodeId, label, type) => {
       showCreateDrillModal(nodeId, label, type);
+    },
+    onHoverDrillable: (targetDiagramId) => {
+      updatePreview(targetDiagramId);
+    },
+    onClickDrillable: (targetDiagramId) => {
+      onClickDrillable(targetDiagramId);
     },
   }).then(() => {
     editorFooter.classList.remove('error');
