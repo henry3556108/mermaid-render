@@ -431,6 +431,7 @@ function initEditor() {
   document.getElementById('btn-editor-reset').addEventListener('click', () => {
     const diagramId = getCurrentDiagramId();
     if (!diagramId) return;
+    clearTimeout(debounceTimer);
     clearEditorContent(diagramId);
     const raw = getRawDefinition(diagramId);
     if (raw) {
