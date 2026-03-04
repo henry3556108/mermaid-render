@@ -45,7 +45,7 @@ export function initRenderer() {
   // Initialize Mermaid
   window.mermaid.initialize({
     startOnLoad: false,
-    securityLevel: 'loose',
+    securityLevel: 'strict',
     theme: 'default',
     flowchart: {
       useMaxWidth: false,

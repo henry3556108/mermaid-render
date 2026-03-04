@@ -6,9 +6,6 @@
  * with summary nodes while redirecting edges.
  */
 
-// Match an edge line: NodeA --> NodeB  or  NodeA -->|label| NodeB
-const EDGE_LINE_RE = /^\s*(\w+)\s*(-+->|=+=>|-\.+->)\s*(?:\|([^|]*)\|\s*)?(\w+)/;
-
 // Match subgraph start: subgraph ID["Label"] or subgraph ID
 const SUBGRAPH_START_RE = /^\s*subgraph\s+(\w+)(?:\s*\["?([^"\]]*)"?\])?\s*$/;
 
@@ -21,6 +18,127 @@ const HEADER_RE = /^\s*(graph|flowchart)\s+(TB|BT|LR|RL|TD)/i;
 // Match any standalone node definition: ID followed by any bracket-based shape
 // Covers: A["x"], A("x"), A[("x")], A(["x"]), A(("x")), A[["x"]], A{{"x"}}, A{"x"}, A>"x"], A[/x/], etc.
 const NODE_DEF_RE = /^\s*(\w+)\s*[\[({>]/;
+
+/**
+ * Skip over a Mermaid node shape definition (e.g. ["text"], ("text"), {{"text"}}, >"text"])
+ * starting at position `pos`. Returns the position after the closing bracket,
+ * or `startPos` if no shape is found.
+ */
+function skipNodeShape(str, pos) {
+  const startPos = pos;
+  while (pos < str.length && str[pos] === ' ') pos++;
+  if (pos >= str.length) return startPos;
+
+  const ch = str[pos];
+  const brackets = { '[': ']', '(': ')', '{': '}' };
+
+  // Flag shape: >text]
+  if (ch === '>') {
+    pos++;
+    let inQuote = false;
+    while (pos < str.length) {
+      if (str[pos] === '"') inQuote = !inQuote;
+      else if (!inQuote && str[pos] === ']') { pos++; return pos; }
+      pos++;
+    }
+    return startPos;
+  }
+
+  if (!(ch in brackets)) return startPos;
+
+  const open = ch;
+  const close = brackets[open];
+  let depth = 0;
+  let inQuote = false;
+  while (pos < str.length) {
+    const c = str[pos];
+    if (c === '"') inQuote = !inQuote;
+    else if (!inQuote) {
+      if (c === open) depth++;
+      else if (c === close) {
+        depth--;
+        if (depth <= 0) { pos++; return pos; }
+      }
+    }
+    pos++;
+  }
+  return startPos; // unclosed bracket — treat as no shape
+}
+
+/**
+ * Parse a Mermaid edge line. Returns { from, to, arrow, label } or null.
+ * Supports:
+ *   - A --> B, A ==> B, A -.-> B          (direct arrows)
+ *   - A -->|label| B                       (pipe label)
+ *   - A -- "label" --> B, A -- label --> B (inline label)
+ *   - A["text"] --> B["text"]              (node shape definitions on either side)
+ */
+function parseEdge(trimmed) {
+  const fromMatch = trimmed.match(/^(\w+)/);
+  if (!fromMatch) return null;
+  const from = fromMatch[1];
+  let pos = from.length;
+
+  // Skip optional node shape definition on the "from" side
+  pos = skipNodeShape(trimmed, pos);
+
+  // Skip whitespace
+  while (pos < trimmed.length && trimmed[pos] === ' ') pos++;
+  if (pos >= trimmed.length) return null;
+
+  const rest = trimmed.substring(pos);
+  let arrow = null, label = '', consumed = 0;
+  let m;
+
+  // Inline label patterns: -- "text" --> / -- text -->
+  if ((m = rest.match(/^--\s+"([^"]*)"\s*-->/))) {
+    arrow = '-->'; label = m[1]; consumed = m[0].length;
+  } else if ((m = rest.match(/^--\s+(.+?)\s+-->/))) {
+    arrow = '-->'; label = m[1]; consumed = m[0].length;
+  // Inline label: == "text" ==> / == text ==>
+  } else if ((m = rest.match(/^==\s+"([^"]*)"\s*==>/))) {
+    arrow = '==>'; label = m[1]; consumed = m[0].length;
+  } else if ((m = rest.match(/^==\s+(.+?)\s+==>/))) {
+    arrow = '==>'; label = m[1]; consumed = m[0].length;
+  // Inline label: -. "text" .-> / -. text .->
+  } else if ((m = rest.match(/^-\.\s+"([^"]*)"\s*\.->/))) {
+    arrow = '-.->'; label = m[1]; consumed = m[0].length;
+  } else if ((m = rest.match(/^-\.\s+(.+?)\s+\.->/))) {
+    arrow = '-.->'; label = m[1]; consumed = m[0].length;
+  }
+
+  // Direct arrow with optional pipe label
+  if (!arrow) {
+    m = rest.match(/^(-+->|=+=>|-\.+->)\s*(?:\|([^|]*)\|)?/);
+    if (!m) return null;
+    arrow = m[1]; label = (m[2] || '').trim(); consumed = m[0].length;
+  }
+
+  // Skip whitespace after arrow
+  pos += consumed;
+  while (pos < trimmed.length && trimmed[pos] === ' ') pos++;
+
+  // Extract "to" node ID
+  const toMatch = trimmed.substring(pos).match(/^(\w+)/);
+  if (!toMatch) return null;
+
+  return { from, to: toMatch[1], arrow, label: label.trim() };
+}
+
+/**
+ * Extract a standalone node definition from an edge line.
+ * E.g., from 'A["label"] --> B["text"]' and nodeId "B",
+ * returns '  B["text"]'. Returns null if no inline shape found.
+ */
+function extractInlineDef(line, nodeId) {
+  const re = new RegExp('\\b' + nodeId + '(?=\\s*[\\[({>])');
+  const m = line.match(re);
+  if (!m) return null;
+  const idEnd = m.index + nodeId.length;
+  const shapeEnd = skipNodeShape(line, idEnd);
+  if (shapeEnd === idEnd) return null;
+  return '  ' + line.substring(m.index, shapeEnd);
+}
 
 /**
  * Parse a Mermaid flowchart definition and extract structure.
@@ -70,12 +188,10 @@ export function parseMermaidDefinition(definition) {
     }
 
     // Edge line
-    const edgeMatch = trimmed.match(EDGE_LINE_RE);
-    if (edgeMatch) {
-      const from = edgeMatch[1];
-      const to = edgeMatch[4];
-      const label = (edgeMatch[3] || '').trim();
-      edges.push({ from, to, label, line: i });
+    const edgeInfo = parseEdge(trimmed);
+    if (edgeInfo) {
+      const { from, to } = edgeInfo;
+      edges.push({ ...edgeInfo, line: i });
 
       allNodeIds.add(from);
       allNodeIds.add(to);
@@ -143,17 +259,7 @@ export function transformDefinition(definition, collapsedIds, prebuiltParsed) {
     sgMap.set(sg.id, sg);
   }
 
-  // Map each collapsed internal node -> its collapsed subgraph ID (summary node)
-  const nodeToSummary = new Map();
-  for (const sgId of collapsedIds) {
-    const sg = sgMap.get(sgId);
-    if (!sg) continue;
-    for (const nodeId of sg.nodeIds) {
-      nodeToSummary.set(nodeId, sgId);
-    }
-  }
-
-  // Build collapsed line ranges
+  // Build collapsed line ranges (must be built before nodeToSummary)
   const collapsedRanges = [];
   for (const sgId of collapsedIds) {
     const sg = sgMap.get(sgId);
@@ -166,6 +272,26 @@ export function transformDefinition(definition, collapsedIds, prebuiltParsed) {
       if (lineIdx >= r.start && lineIdx <= r.end) return true;
     }
     return false;
+  }
+
+  // Check if a subgraph is nested inside another collapsed subgraph
+  function isNestedInCollapsedRange(sg) {
+    for (const r of collapsedRanges) {
+      if (r.id === sg.id) continue;
+      if (sg.startLine >= r.start && sg.endLine <= r.end) return true;
+    }
+    return false;
+  }
+
+  // Map each collapsed internal node -> its outermost collapsed subgraph ID (summary node)
+  // Skip nested collapsed subgraphs — their nodes belong to the outer collapsed parent
+  const nodeToSummary = new Map();
+  for (const sgId of collapsedIds) {
+    const sg = sgMap.get(sgId);
+    if (!sg || isNestedInCollapsedRange(sg)) continue;
+    for (const nodeId of sg.nodeIds) {
+      nodeToSummary.set(nodeId, sgId);
+    }
   }
 
   // Build edge lookup by line number
@@ -195,10 +321,11 @@ export function transformDefinition(definition, collapsedIds, prebuiltParsed) {
     // If this line is inside a collapsed range...
     if (isLineInCollapsedRange(i)) {
       // At the start line of a collapsed subgraph, emit a summary node
+      // but only if it's not nested inside another collapsed subgraph
       const sgMatch = trimmed.match(SUBGRAPH_START_RE);
       if (sgMatch && collapsedIds.has(sgMatch[1]) && !insertedSummaries.has(sgMatch[1])) {
         const sg = sgMap.get(sgMatch[1]);
-        if (sg) {
+        if (sg && !isNestedInCollapsedRange(sg)) {
           insertedSummaries.add(sg.id);
           outputLines.push(`  ${sg.id}["[+] ${sg.label} (${sg.nodeIds.length} nodes)"]`);
         }
@@ -210,11 +337,10 @@ export function transformDefinition(definition, collapsedIds, prebuiltParsed) {
     // Handle edge lines: redirect endpoints if they point to collapsed nodes
     const edge = edgeByLine.get(i);
     if (edge) {
-      let from = edge.from;
-      let to = edge.to;
-
-      if (nodeToSummary.has(from)) from = nodeToSummary.get(from);
-      if (nodeToSummary.has(to)) to = nodeToSummary.get(to);
+      const fromRedirected = nodeToSummary.has(edge.from);
+      const toRedirected = nodeToSummary.has(edge.to);
+      const from = fromRedirected ? nodeToSummary.get(edge.from) : edge.from;
+      const to = toRedirected ? nodeToSummary.get(edge.to) : edge.to;
 
       // Skip self-loops (internal edges within same collapsed subgraph)
       if (from === to) continue;
@@ -224,10 +350,24 @@ export function transformDefinition(definition, collapsedIds, prebuiltParsed) {
       if (emittedEdges.has(edgeKey)) continue;
       emittedEdges.add(edgeKey);
 
-      if (edge.label) {
-        outputLines.push(`  ${from} -->|${edge.label}| ${to}`);
+      if (!fromRedirected && !toRedirected) {
+        // No redirect needed — preserve original line with node definitions intact
+        outputLines.push(lines[i]);
       } else {
-        outputLines.push(`  ${from} --> ${to}`);
+        // Preserve inline node definitions for non-redirected endpoints
+        if (!fromRedirected) {
+          const def = extractInlineDef(lines[i], edge.from);
+          if (def) outputLines.push(def);
+        }
+        if (!toRedirected) {
+          const def = extractInlineDef(lines[i], edge.to);
+          if (def) outputLines.push(def);
+        }
+        if (edge.label) {
+          outputLines.push(`  ${from} ${edge.arrow}|${edge.label}| ${to}`);
+        } else {
+          outputLines.push(`  ${from} ${edge.arrow} ${to}`);
+        }
       }
       continue;
     }
@@ -274,9 +414,9 @@ export function extractSubgraphContent(definition, subgraphId) {
     // Only include if both endpoints are inside this subgraph
     if (nodeSet.has(edge.from) && nodeSet.has(edge.to)) {
       if (edge.label) {
-        contentLines.push(`  ${edge.from} -->|${edge.label}| ${edge.to}`);
+        contentLines.push(`  ${edge.from} ${edge.arrow}|${edge.label}| ${edge.to}`);
       } else {
-        contentLines.push(`  ${edge.from} --> ${edge.to}`);
+        contentLines.push(`  ${edge.from} ${edge.arrow} ${edge.to}`);
       }
     }
   }
