@@ -66,27 +66,11 @@ function skipNodeShape(str, pos) {
 }
 
 /**
- * Parse a Mermaid edge line. Returns { from, to, arrow, label } or null.
- * Supports:
- *   - A --> B, A ==> B, A -.-> B          (direct arrows)
- *   - A -->|label| B                       (pipe label)
- *   - A -- "label" --> B, A -- label --> B (inline label)
- *   - A["text"] --> B["text"]              (node shape definitions on either side)
+ * Try to parse one arrow + label starting at position `pos` in `str`.
+ * Returns { arrow, label, consumed } or null if no arrow found.
  */
-function parseEdge(trimmed) {
-  const fromMatch = trimmed.match(/^(\w+)/);
-  if (!fromMatch) return null;
-  const from = fromMatch[1];
-  let pos = from.length;
-
-  // Skip optional node shape definition on the "from" side
-  pos = skipNodeShape(trimmed, pos);
-
-  // Skip whitespace
-  while (pos < trimmed.length && trimmed[pos] === ' ') pos++;
-  if (pos >= trimmed.length) return null;
-
-  const rest = trimmed.substring(pos);
+function parseArrow(str, pos) {
+  const rest = str.substring(pos);
   let arrow = null, label = '', consumed = 0;
   let m;
 
@@ -114,15 +98,59 @@ function parseEdge(trimmed) {
     arrow = m[1]; label = (m[2] || '').trim(); consumed = m[0].length;
   }
 
-  // Skip whitespace after arrow
-  pos += consumed;
-  while (pos < trimmed.length && trimmed[pos] === ' ') pos++;
+  return { arrow, label: label.trim(), consumed };
+}
 
-  // Extract "to" node ID
-  const toMatch = trimmed.substring(pos).match(/^(\w+)/);
-  if (!toMatch) return null;
+/**
+ * Parse all edges from a Mermaid edge line (handles chains like A --> B --> C).
+ * Returns array of { from, to, arrow, label } objects, or empty array.
+ * Supports:
+ *   - A --> B, A ==> B, A -.-> B          (direct arrows)
+ *   - A -->|label| B                       (pipe label)
+ *   - A -- "label" --> B, A -- label --> B (inline label)
+ *   - A["text"] --> B["text"]              (node shape definitions on either side)
+ *   - A --> B --> C --> D                   (chained edges)
+ */
+function parseEdges(trimmed) {
+  const edges = [];
+  const fromMatch = trimmed.match(/^(\w+)/);
+  if (!fromMatch) return edges;
 
-  return { from, to: toMatch[1], arrow, label: label.trim() };
+  let currentNode = fromMatch[1];
+  let pos = currentNode.length;
+
+  // Skip optional node shape definition on the first node
+  pos = skipNodeShape(trimmed, pos);
+
+  while (pos < trimmed.length) {
+    // Skip whitespace
+    while (pos < trimmed.length && trimmed[pos] === ' ') pos++;
+    if (pos >= trimmed.length) break;
+
+    const arrowResult = parseArrow(trimmed, pos);
+    if (!arrowResult) break;
+
+    pos += arrowResult.consumed;
+
+    // Skip whitespace after arrow
+    while (pos < trimmed.length && trimmed[pos] === ' ') pos++;
+
+    // Extract "to" node ID
+    const toMatch = trimmed.substring(pos).match(/^(\w+)/);
+    if (!toMatch) break;
+
+    const toNode = toMatch[1];
+    pos += toNode.length;
+
+    edges.push({ from: currentNode, to: toNode, arrow: arrowResult.arrow, label: arrowResult.label });
+
+    currentNode = toNode;
+
+    // Skip optional node shape on "to" node
+    pos = skipNodeShape(trimmed, pos);
+  }
+
+  return edges;
 }
 
 /**
@@ -187,22 +215,24 @@ export function parseMermaidDefinition(definition) {
       continue;
     }
 
-    // Edge line
-    const edgeInfo = parseEdge(trimmed);
-    if (edgeInfo) {
-      const { from, to } = edgeInfo;
-      edges.push({ ...edgeInfo, line: i });
+    // Edge line (supports chained edges like A --> B --> C)
+    const edgeList = parseEdges(trimmed);
+    if (edgeList.length > 0) {
+      for (const edgeInfo of edgeList) {
+        const { from, to } = edgeInfo;
+        edges.push({ ...edgeInfo, line: i });
 
-      allNodeIds.add(from);
-      allNodeIds.add(to);
+        allNodeIds.add(from);
+        allNodeIds.add(to);
 
-      // Register nodes in ALL ancestor subgraphs (not just innermost)
-      if (subgraphStack.length > 0) {
-        for (const sg of subgraphStack) {
-          sg.nodeIds.push(from, to);
+        // Register nodes in ALL ancestor subgraphs (not just innermost)
+        if (subgraphStack.length > 0) {
+          for (const sg of subgraphStack) {
+            sg.nodeIds.push(from, to);
+          }
+          subgraphNodeIds.add(from);
+          subgraphNodeIds.add(to);
         }
-        subgraphNodeIds.add(from);
-        subgraphNodeIds.add(to);
       }
       continue;
     }
@@ -294,10 +324,13 @@ export function transformDefinition(definition, collapsedIds, prebuiltParsed) {
     }
   }
 
-  // Build edge lookup by line number
-  const edgeByLine = new Map();
+  // Build edge lookup by line number (multiple edges per line for chains)
+  const edgesByLine = new Map();
   for (const edge of edges) {
-    edgeByLine.set(edge.line, edge);
+    if (!edgesByLine.has(edge.line)) {
+      edgesByLine.set(edge.line, []);
+    }
+    edgesByLine.get(edge.line).push(edge);
   }
 
   // Track inserted summary nodes and deduplicated redirected edges
@@ -335,38 +368,52 @@ export function transformDefinition(definition, collapsedIds, prebuiltParsed) {
     }
 
     // Handle edge lines: redirect endpoints if they point to collapsed nodes
-    const edge = edgeByLine.get(i);
-    if (edge) {
-      const fromRedirected = nodeToSummary.has(edge.from);
-      const toRedirected = nodeToSummary.has(edge.to);
-      const from = fromRedirected ? nodeToSummary.get(edge.from) : edge.from;
-      const to = toRedirected ? nodeToSummary.get(edge.to) : edge.to;
+    const lineEdges = edgesByLine.get(i);
+    if (lineEdges) {
+      // Check if any edge in the chain needs redirection
+      let needsRedirect = false;
+      for (const edge of lineEdges) {
+        if (nodeToSummary.has(edge.from) || nodeToSummary.has(edge.to)) {
+          needsRedirect = true;
+          break;
+        }
+      }
 
-      // Skip self-loops (internal edges within same collapsed subgraph)
-      if (from === to) continue;
-
-      // Deduplicate redirected edges
-      const edgeKey = `${from}-->${to}`;
-      if (emittedEdges.has(edgeKey)) continue;
-      emittedEdges.add(edgeKey);
-
-      if (!fromRedirected && !toRedirected) {
+      if (!needsRedirect) {
         // No redirect needed — preserve original line with node definitions intact
         outputLines.push(lines[i]);
       } else {
-        // Preserve inline node definitions for non-redirected endpoints
-        if (!fromRedirected) {
-          const def = extractInlineDef(lines[i], edge.from);
-          if (def) outputLines.push(def);
-        }
-        if (!toRedirected) {
-          const def = extractInlineDef(lines[i], edge.to);
-          if (def) outputLines.push(def);
-        }
-        if (edge.label) {
-          outputLines.push(`  ${from} ${edge.arrow}|${edge.label}| ${to}`);
-        } else {
-          outputLines.push(`  ${from} ${edge.arrow} ${to}`);
+        // At least one edge needs redirection — break chain into individual edges
+        const seenDefs = new Set();
+        for (const edge of lineEdges) {
+          const fromRedirected = nodeToSummary.has(edge.from);
+          const toRedirected = nodeToSummary.has(edge.to);
+          const from = fromRedirected ? nodeToSummary.get(edge.from) : edge.from;
+          const to = toRedirected ? nodeToSummary.get(edge.to) : edge.to;
+
+          // Skip self-loops (internal edges within same collapsed subgraph)
+          if (from === to) continue;
+
+          // Deduplicate redirected edges
+          const edgeKey = `${from}-->${to}`;
+          if (emittedEdges.has(edgeKey)) continue;
+          emittedEdges.add(edgeKey);
+
+          // Preserve inline node definitions for non-redirected endpoints
+          if (!fromRedirected && !seenDefs.has(edge.from)) {
+            const def = extractInlineDef(lines[i], edge.from);
+            if (def) { outputLines.push(def); seenDefs.add(edge.from); }
+          }
+          if (!toRedirected && !seenDefs.has(edge.to)) {
+            const def = extractInlineDef(lines[i], edge.to);
+            if (def) { outputLines.push(def); seenDefs.add(edge.to); }
+          }
+
+          if (edge.label) {
+            outputLines.push(`  ${from} ${edge.arrow}|${edge.label}| ${to}`);
+          } else {
+            outputLines.push(`  ${from} ${edge.arrow} ${to}`);
+          }
         }
       }
       continue;
