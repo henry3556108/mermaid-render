@@ -31,6 +31,8 @@ import {
 import { renderBreadcrumb, loadDiagramDefinition } from './navigator.js';
 import { initRenderer, renderDiagram, zoomIn, zoomOut, zoomReset } from './renderer.js';
 import { transformDefinition, extractSubgraphIds, parseMermaidDefinition, extractSubgraphContent } from './parser.js';
+import { generateDrawioXml } from './export-drawio.js';
+import { exportSvgAsPng } from './export-png.js';
 
 // Editor elements
 let editorTextarea = null;
@@ -163,17 +165,61 @@ function syncProjectName() {
 
 // --- Project Controls ---
 
+function triggerDownload(blob, filename) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+function safeName() {
+  return getProjectName().replace(/[^a-zA-Z0-9_\-\u4e00-\u9fff ]/g, '').trim() || 'mermaid-project';
+}
+
 function initProjectControls() {
-  document.getElementById('btn-export').addEventListener('click', () => {
+  // Export dropdown toggle
+  const exportMenu = document.getElementById('export-menu');
+  document.getElementById('btn-export').addEventListener('click', (e) => {
+    e.stopPropagation();
+    exportMenu.classList.toggle('open');
+  });
+  document.addEventListener('click', () => exportMenu.classList.remove('open'));
+
+  // JSON export (full project)
+  document.getElementById('btn-export-json').addEventListener('click', () => {
+    exportMenu.classList.remove('open');
     const json = getProjectJSON();
-    const blob = new Blob([json], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    const safeName = getProjectName().replace(/[^a-zA-Z0-9_\-\u4e00-\u9fff ]/g, '').trim() || 'mermaid-project';
-    a.download = safeName + '.json';
-    a.click();
-    URL.revokeObjectURL(url);
+    triggerDownload(new Blob([json], { type: 'application/json' }), safeName() + '.json');
+  });
+
+  // draw.io export (current diagram)
+  document.getElementById('btn-export-drawio').addEventListener('click', () => {
+    exportMenu.classList.remove('open');
+    const diagramId = getCurrentDiagramId();
+    if (!diagramId) return;
+    const rawDef = getEditorContent(diagramId) || getRawDefinition(diagramId) || '';
+    // Apply collapse transforms so the export matches the visible SVG
+    const collapsedIds = getCollapseState(diagramId);
+    const definition = transformDefinition(rawDef, collapsedIds);
+    const svgEl = document.getElementById('diagram-canvas').querySelector('svg');
+    const registry = getRegistry();
+    const title = registry.diagrams[diagramId]?.title || 'Diagram';
+    const xml = generateDrawioXml(definition, svgEl, title);
+    if (!xml) { alert('No diagram to export.'); return; }
+    triggerDownload(new Blob([xml], { type: 'application/xml' }), safeName() + '.drawio');
+  });
+
+  // PNG export (current diagram)
+  document.getElementById('btn-export-png').addEventListener('click', async () => {
+    exportMenu.classList.remove('open');
+    try {
+      const blob = await exportSvgAsPng(document.getElementById('diagram-canvas'));
+      triggerDownload(blob, safeName() + '.png');
+    } catch (err) {
+      alert('PNG export failed: ' + err.message);
+    }
   });
 
   const fileInput = document.getElementById('file-import');
